@@ -8,6 +8,7 @@ aes = "0.8.2"
 bytes = "1.4.0"
 cbc = { version = "0.1.2" }
 futures = "0.3.28"
+pin-project = "1.0.12"
 
 [dev-dependencies]
 tokio = { version = "1.26.0", features = ["full"] }

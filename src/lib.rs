@@ -11,10 +11,13 @@ use cbc::{
     Encryptor,
 };
 use futures::Stream;
+use pin_project::pin_project;
 
 const BLOCK_SIZE: usize = 16;
 
+#[pin_project]
 pub struct AesSteam<S> {
+    #[pin]
     inner: S,
     ended: bool,
     remaining: BytesMut,
@@ -32,28 +35,30 @@ impl<S: Stream<Item = Result<Bytes, E>>, E> AesSteam<S> {
     }
 }
 
-impl<S: Stream<Item = Result<Bytes, E>> + Unpin, E> Stream for AesSteam<S> {
+impl<S: Stream<Item = Result<Bytes, E>>, E> Stream for AesSteam<S> {
     type Item = Result<Bytes, E>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.ended {
             return Poll::Ready(None);
         }
 
-        let mut bytes = mem::take(&mut self.remaining);
+        let mut this = self.project();
+
+        let mut bytes = mem::take(this.remaining);
         let chunk = loop {
-            match Pin::new(&mut self.inner).poll_next(cx) {
+            match this.inner.as_mut().poll_next(cx) {
                 Poll::Ready(chunk) => match chunk.transpose() {
                     Ok(Some(chunk)) if bytes.len() + chunk.len() >= BLOCK_SIZE => break chunk,
                     Ok(Some(chunk)) => bytes.put(chunk),
                     Ok(None) => {
-                        self.ended = true;
+                        *this.ended = true;
                         break Bytes::new();
                     }
                     Err(err) => return Poll::Ready(Some(Err(err))),
                 },
                 Poll::Pending => {
-                    self.remaining = bytes;
+                    *this.remaining = bytes;
                     return Poll::Pending;
                 }
             }
@@ -67,12 +72,12 @@ impl<S: Stream<Item = Result<Bytes, E>> + Unpin, E> Stream for AesSteam<S> {
             let remaining_len = chain.remaining();
             if remaining_len >= BLOCK_SIZE {
                 chain.copy_to_slice(&mut block);
-                self.encryptor.encrypt_block_mut((&mut block).into());
+                this.encryptor.encrypt_block_mut((&mut block).into());
                 encoded.extend_from_slice(&block);
-            } else if self.ended {
+            } else if *this.ended {
                 chain.copy_to_slice(&mut block[..remaining_len]);
                 let encryptor = mem::replace(
-                    &mut self.encryptor,
+                    this.encryptor,
                     Encryptor::<Aes128>::new(&[0; 16].into(), &[0; 16].into()),
                 );
                 encryptor
@@ -81,7 +86,7 @@ impl<S: Stream<Item = Result<Bytes, E>> + Unpin, E> Stream for AesSteam<S> {
                 encoded.extend_from_slice(&block);
                 break;
             } else {
-                self.remaining = BytesMut::from_iter(chain);
+                *this.remaining = BytesMut::from_iter(chain);
                 break;
             }
         }

@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     mem,
     pin::Pin,
     task::{Context, Poll},
@@ -33,7 +32,7 @@ impl<S: Stream<Item = Result<Bytes, E>>, E> AesSteam<S> {
     }
 }
 
-impl<S: Stream<Item = Result<Bytes, E>> + Unpin, E: Debug + Unpin> Stream for AesSteam<S> {
+impl<S: Stream<Item = Result<Bytes, E>> + Unpin, E> Stream for AesSteam<S> {
     type Item = Result<Bytes, E>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

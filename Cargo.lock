@@ -21,7 +21,6 @@ dependencies = [
  "bytes",
  "cbc",
  "futures",
- "futures-core",
  "hex-literal",
  "sha2",
  "tokio",

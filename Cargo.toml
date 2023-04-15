@@ -4,13 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytes = "1.4.0"
-futures-core = "0.3.28"
 aes = "0.8.2"
+bytes = "1.4.0"
 cbc = { version = "0.1.2" }
+futures = "0.3.28"
 
 [dev-dependencies]
-futures = "0.3.28"
 tokio = { version = "1.26.0", features = ["full"] }
 tokio-util = { version = "0.7.4", features = ["io"] }
 sha2 = "0.10.6"

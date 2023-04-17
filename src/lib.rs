@@ -4,11 +4,12 @@ use std::{
     task::{Context, Poll},
 };
 
-use aes::Aes128;
+pub use aes::cipher::InvalidLength;
+use aes::{Aes128, Aes192, Aes256};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cbc::{
     cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit},
-    Encryptor,
+    Encryptor as CbcEncryptor,
 };
 use futures::Stream;
 use pin_project::pin_project;
@@ -21,17 +22,24 @@ pub struct AesSteam<S> {
     inner: S,
     ended: bool,
     remaining: BytesMut,
-    encryptor: Encryptor<Aes128>,
+    encryptor: Option<Encryptor>,
 }
 
 impl<S: Stream<Item = Result<Bytes, E>>, E> AesSteam<S> {
-    pub fn new(stream: S, key: &[u8; 16], iv: &[u8; 16]) -> Self {
-        Self {
+    /// Returns an error if the `key` length doesn't match the specified AES
+    /// variant or if `iv` is not 16 bytes long.
+    pub fn new(
+        stream: S,
+        key_size: AesKeySize,
+        key: &[u8],
+        iv: &[u8],
+    ) -> Result<Self, InvalidLength> {
+        Ok(Self {
             inner: stream,
             ended: false,
             remaining: BytesMut::new(),
-            encryptor: Encryptor::new(key.into(), iv.into()),
-        }
+            encryptor: Some(Encryptor::new(key_size, key, iv)?),
+        })
     }
 }
 
@@ -72,17 +80,14 @@ impl<S: Stream<Item = Result<Bytes, E>>, E> Stream for AesSteam<S> {
             let remaining_len = chain.remaining();
             if remaining_len >= BLOCK_SIZE {
                 chain.copy_to_slice(&mut block);
-                this.encryptor.encrypt_block_mut((&mut block).into());
+                this.encryptor.as_mut().unwrap().encrypt_block(&mut block);
                 encoded.extend_from_slice(&block);
             } else if *this.ended {
                 chain.copy_to_slice(&mut block[..remaining_len]);
-                let encryptor = mem::replace(
-                    this.encryptor,
-                    Encryptor::<Aes128>::new(&[0; 16].into(), &[0; 16].into()),
-                );
-                encryptor
-                    .encrypt_padded_mut::<Pkcs7>(&mut block, remaining_len)
-                    .unwrap();
+                this.encryptor
+                    .take()
+                    .unwrap()
+                    .encrypt_last_block(&mut block, remaining_len);
                 encoded.extend_from_slice(&block);
                 break;
             } else {
@@ -95,10 +100,47 @@ impl<S: Stream<Item = Result<Bytes, E>>, E> Stream for AesSteam<S> {
     }
 }
 
+pub enum AesKeySize {
+    Aes128,
+    Aes192,
+    Aes256,
+}
+
+enum Encryptor {
+    Aes128(CbcEncryptor<Aes128>),
+    Aes192(CbcEncryptor<Aes192>),
+    Aes256(CbcEncryptor<Aes256>),
+}
+
+impl Encryptor {
+    fn new(key_size: AesKeySize, key: &[u8], iv: &[u8]) -> Result<Self, InvalidLength> {
+        Ok(match key_size {
+            AesKeySize::Aes128 => Self::Aes128(CbcEncryptor::<Aes128>::new_from_slices(key, iv)?),
+            AesKeySize::Aes192 => Self::Aes192(CbcEncryptor::<Aes192>::new_from_slices(key, iv)?),
+            AesKeySize::Aes256 => Self::Aes256(CbcEncryptor::<Aes256>::new_from_slices(key, iv)?),
+        })
+    }
+
+    fn encrypt_block(&mut self, block: &mut [u8; 16]) {
+        match self {
+            Encryptor::Aes128(encryptor) => encryptor.encrypt_block_mut(block.into()),
+            Encryptor::Aes192(encryptor) => encryptor.encrypt_block_mut(block.into()),
+            Encryptor::Aes256(encryptor) => encryptor.encrypt_block_mut(block.into()),
+        }
+    }
+
+    fn encrypt_last_block(self, block: &mut [u8; 16], len: usize) {
+        match self {
+            Encryptor::Aes128(encryptor) => encryptor.encrypt_padded_mut::<Pkcs7>(block, len),
+            Encryptor::Aes192(encryptor) => encryptor.encrypt_padded_mut::<Pkcs7>(block, len),
+            Encryptor::Aes256(encryptor) => encryptor.encrypt_padded_mut::<Pkcs7>(block, len),
+        }
+        .unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
-
     use bytes::Bytes;
     use futures::{stream, Stream, StreamExt};
     use hex_literal::hex;
@@ -107,14 +149,17 @@ mod tests {
     use tokio_util::io::ReaderStream;
 
     use super::AesSteam;
+    use crate::AesKeySize;
 
     async fn encrypt_and_hash<S: Stream<Item = B> + Unpin, B: Into<Bytes>>(stream: S) -> [u8; 32] {
         let mut digest = Sha256::new();
         let mut encryptor = AesSteam::new(
-            stream.map(|b| Ok::<_, Infallible>(b.into())),
+            stream.map(|b| Ok::<_, ()>(b.into())),
+            AesKeySize::Aes128,
             &[0x42; 16],
             &[0x00; 16],
-        );
+        )
+        .unwrap();
         while let Some(Ok(bytes)) = encryptor.next().await {
             digest.update(&bytes);
         }
@@ -178,6 +223,7 @@ mod tests {
         );
     }
 
+    #[rustfmt::skip]
     #[tokio::test]
     async fn file() {
         // cat testfile.bin | openssl enc -aes-128-cbc -e -K 42424242424242424242424242424242 -iv 0 -nosalt | shasum -a 256 # MacOS

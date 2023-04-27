@@ -169,6 +169,7 @@ mod tests {
     #[tokio::test]
     async fn empty() {
         assert_eq!(
+            // echo -n | openssl enc -aes-128-cbc -e -K 42424242424242424242424242424242 -iv 0 -nosalt | shasum -a 256 # MacOS
             encrypt_and_hash(stream::empty::<Bytes>()).await,
             hex!("9aef0dbd6133cb2d3976d0f09fab0d4e7e9a020ceaab96bf35cd22f9369b1b9d")
         )
@@ -176,6 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn less_than_one_block() {
+        // echo -n hello | openssl enc -aes-128-cbc -e -K 42424242424242424242424242424242 -iv 0 -nosalt | shasum -a 256 # MacOS
         let expected = hex!("69331974fa39104bd6581e8093ad1d09c5f60330b8f6ed41a401b7584b27e7c6");
         assert_eq!(encrypt_and_hash(stream::iter(["hello"])).await, expected);
         assert_eq!(
@@ -186,6 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn exactly_one_block() {
+        // printf '\x42%.0s' {1..16} | openssl enc -aes-128-cbc -e -K 42424242424242424242424242424242 -iv 0 -nosalt | shasum -a 256 # MacOS
         let expected = hex!("207f95b2f792dbaa56438f35937bff8ec7670c2736654cd7c0764baa5732b2d1");
         assert_eq!(
             encrypt_and_hash(stream::iter([[0x42u8; 16].as_slice()])).await,
@@ -199,6 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn more_than_one_block() {
+        // printf '\x42%.0s' {1..23} | openssl enc -aes-128-cbc -e -K 42424242424242424242424242424242 -iv 0 -nosalt | shasum -a 256 # MacOS
         let expected = hex!("fe22d4ee0ea759adee8bf18239366f8872b59a72b2c7c47aa18f2e3d4ac97fe1");
         assert_eq!(
             encrypt_and_hash(stream::iter([[0x42u8; 23].as_slice()])).await,
@@ -212,6 +216,7 @@ mod tests {
 
     #[tokio::test]
     async fn exactly_two_blocks() {
+        // printf '\x42%.0s' {1..32} | openssl enc -aes-128-cbc -e -K 42424242424242424242424242424242 -iv 0 -nosalt | shasum -a 256 # MacOS
         let expected = hex!("6f1db9b84f3f8a1397883e3209668a0d3687b973b384150a0891c3f35b2758d1");
         assert_eq!(
             encrypt_and_hash(stream::iter([[0x42u8; 32].as_slice()])).await,

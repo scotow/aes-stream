@@ -13,6 +13,7 @@ use cbc::{
 };
 use futures::Stream;
 use pin_project::pin_project;
+use num_integer::Integer;
 
 const BLOCK_SIZE: usize = 16;
 
@@ -74,7 +75,11 @@ impl<S: Stream<Item = Result<Bytes, E>>, E> Stream for AesSteam<S> {
 
         let mut block = [0; BLOCK_SIZE];
         let mut chain = bytes.freeze().chain(chunk);
-        let mut encoded = BytesMut::new();
+        let mut encoded = BytesMut::with_capacity(if *this.ended {
+            Integer::next_multiple_of(&(chain.remaining() + 1), &BLOCK_SIZE)
+        } else {
+            Integer::prev_multiple_of(&chain.remaining(), &BLOCK_SIZE)
+        });
 
         loop {
             let remaining_len = chain.remaining();
